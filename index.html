@@ -173,6 +173,14 @@ table.t td.n{text-align:right;font-family:ui-monospace,Consolas,monospace;white-
 #tutCard .tNav{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 #tutCard .tNav .sp{flex:1}
 #tutCard label{font-size:12px;color:var(--dim);display:flex;gap:6px;align-items:center;margin-top:10px;cursor:pointer}
+
+/* ===== v23 probes & terminal glow ===== */
+#bench .pinGlow{opacity:0;pointer-events:none;transition:opacity .15s}
+#bench.dragging .pinGlow{opacity:.75;animation:pgPulse 1.1s ease-in-out infinite}
+#bench.dragging .pinGlow.snap{opacity:1;animation:none;stroke:#FFFFFF;stroke-width:3}
+@keyframes pgPulse{0%,100%{opacity:.4}50%{opacity:.9}}
+#bench .probe:hover{filter:brightness(1.15)}
+#bench.dragging{cursor:grabbing}
 </style>
 </head>
 <body>
@@ -2341,7 +2349,8 @@ const PROBES=[
  {k:'aB',lab:'A BLK',col:'#4A4A4A',tool:'scope'},
  {k:'bR',lab:'B RED',col:'#3FD8FF',tool:'scope'},
  {k:'bB',lab:'B BLK',col:'#4A4A4A',tool:'scope'}];
-const PP={};PROBES.forEach((p,i)=>PP[p.k]={x:120+i*150,y:372,tp:null});
+const PP={};PROBES.forEach((p,i)=>PP[p.k]={x:60+(p.tool==='dmm'?i:i-2)*230,y:404,tp:null,rx:0,ry:0});
+PROBES.forEach(p=>{PP[p.k].rx=PP[p.k].x;PP[p.k].ry=PP[p.k].y;});   /* v23: remembered rest spot */
 let PIN={};
 function probeAssign(){
   const d=ST.dmm,a=ST.sc.A,b=ST.sc.B;
@@ -2379,6 +2388,7 @@ function buildBench(){
           PIN[p.id]={x,y,def:p};
           const g=E('g',{class:'tp'});
           g.appendChild(E('circle',{cx:x,cy:y,r:15,fill:'transparent'}));
+          g.appendChild(E('circle',{id:'glow_'+p.id,class:'pinGlow',cx:x,cy:y,r:16,fill:'url(#pgGrad)',stroke:'#7CFF9E','stroke-width':2}));
           g.appendChild(E('circle',{id:'ring_'+p.id,cx:x,cy:y,r:12,fill:'none',
             stroke:'#066FEF','stroke-width':3,opacity:0}));
           g.appendChild(E('circle',{cx:x,cy:y,r:7,fill:'#00142E',stroke:'#66A9F7','stroke-width':3}));
@@ -2394,14 +2404,49 @@ function buildBench(){
   s.appendChild(E('rect',{x:8,y:346,width:1084,height:76,rx:10,fill:'#001334',
     stroke:'#2C5590','stroke-dasharray':'6 5'}));
   s.appendChild(E('text',{x:26,y:366,fill:'#7F8C9B','font-size':11},
-    'PROBE REST \u2014 drag a probe onto a pin. Only the probes for the active tool are shown.'));
+    'PROBE REST \u2014 grab a probe anywhere and drag it onto a glowing terminal, or click a terminal. Only the active tool\u2019s probes are shown.'));
+  /* v23 defs: pin glow gradient, probe shading */
+  const df=E('defs',{});s.insertBefore?s.appendChild(df):s.appendChild(df);
+  const rg=E('radialGradient',{id:'pgGrad'});
+  [[0,'#B6FFC8',0.95],[0.55,'#3BE070',0.55],[1,'#3BE070',0]].forEach(q=>rg.appendChild(E('stop',{offset:q[0],'stop-color':q[1],'stop-opacity':q[2]})));
+  df.appendChild(rg);
+  const lg=(id,c)=>{const g=E('linearGradient',{id:id,x1:0,y1:0,x2:0,y2:1});
+    c.forEach(q=>g.appendChild(E('stop',{offset:q[0],'stop-color':q[1]})));df.appendChild(g);};
+  lg('prSteel',[[0,'#F4F6F8'],[0.45,'#B9C0C8'],[1,'#5E666F']]);
+  lg('prGloss',[[0,'rgba(255,255,255,.55)'],[0.35,'rgba(255,255,255,.08)'],[0.7,'rgba(0,0,0,0)'],[1,'rgba(0,0,0,.45)']]);
+  const fs=E('filter',{id:'prShadow',x:'-20%',y:'-60%',width:'140%',height:'220%'});
+  fs.appendChild(E('feDropShadow',{dx:3,dy:5,stdDeviation:3,'flood-color':'#000','flood-opacity':0.6}));df.appendChild(fs);
   PROBES.forEach(p=>{
-    const g=E('g',{id:'pr_'+p.k,style:'cursor:grab'});
-    g.appendChild(E('circle',{r:20,fill:'transparent'}));
-    g.appendChild(E('path',{d:'M0,0 L20,-2 L20,2 Z',fill:'#F5F7FA',stroke:'#8894A6'}));
-    g.appendChild(E('rect',{x:18,y:-9,width:62,height:18,rx:8,fill:p.col,stroke:'#000'}));
-    g.appendChild(E('text',{x:49,y:4,'text-anchor':'middle',fill:'#fff',
-      'font-size':9.5,'font-weight':700},p.lab));
+    const g=E('g',{id:'pr_'+p.k,'data-pk':p.k,class:'probe',style:'cursor:grab;touch-action:none'});
+    const A=(t,a,x)=>g.appendChild(E(t,a,x));
+    const scope=p.tool==='scope',blk=/B$/.test(p.k)&&p.k!=='bR';
+    const body=scope?'#2B2F36':p.col, band=p.col;
+    const sh=E('g',{filter:'url(#prShadow)'});g.appendChild(sh);
+    const S=(t,a,x)=>sh.appendChild(E(t,a,x));
+    /* cable leaving the back of the probe */
+    S('path',{d:'M128,0 C160,0 176,18 214,26',fill:'none',stroke:scope?'#1A1C20':p.col,'stroke-width':6,'stroke-linecap':'round'});
+    S('path',{d:'M128,0 C160,0 176,18 214,26',fill:'none',stroke:'rgba(255,255,255,.18)','stroke-width':1.6,transform:'translate(0,-1.6)'});
+    if(scope&&blk){ /* scope earth lead: crocodile clip tip */
+      S('path',{d:'M0,-1 L10,-6 L30,-6 L30,6 L10,6 Z',fill:'url(#prSteel)',stroke:'#3A4048','stroke-width':0.8});
+      for(let i=0;i<4;i++)S('path',{d:'M'+(12+i*4.5)+',-6 l2,3 l2,-3',fill:'none',stroke:'#4A525C','stroke-width':0.9});
+      S('rect',{x:28,y:-9,width:26,height:18,rx:4,fill:'#16181C',stroke:'#000'});
+    }else{
+      /* steel tip: needle for DMM, sprung hook sleeve for scope */
+      S('path',{d:'M0,0 L22,-1.8 L22,1.8 Z',fill:'url(#prSteel)',stroke:'#4A525C','stroke-width':0.6});
+      if(scope)S('rect',{x:10,y:-3.4,width:16,height:6.8,rx:1.5,fill:'url(#prSteel)',stroke:'#4A525C','stroke-width':0.6});
+      /* finger guard */
+      S('path',{d:'M22,-4 L28,-11 L31,-11 L31,11 L28,11 L22,4 Z',fill:body,stroke:'#000','stroke-width':1});
+    }
+    /* insulated handle with grip rings */
+    S('path',{d:'M31,-8 L110,-7 Q118,-7 120,-5 L128,-4 L128,4 L120,5 Q118,7 110,7 L31,8 Z',fill:body,stroke:'#000','stroke-width':1.1});
+    for(let i=0;i<7;i++)S('rect',{x:40+i*6,y:-8,width:2.6,height:16,fill:'rgba(0,0,0,.35)'});
+    if(scope){S('rect',{x:86,y:-7.4,width:12,height:14.8,fill:band});S('rect',{x:102,y:-7.2,width:5,height:14.4,fill:band});}
+    S('path',{d:'M31,-8 L110,-7 Q118,-7 120,-5 L128,-4 L128,4 L120,5 Q118,7 110,7 L31,8 Z',fill:'url(#prGloss)'});
+    A('text',{x:75,y:-12,'text-anchor':'middle',fill:'#E8F0FB','font-size':9,'font-weight':700,
+      stroke:'#000B1A','stroke-width':3,style:'paint-order:stroke;pointer-events:none'},p.lab);
+    /* generous invisible hit area covering the whole probe, cable included */
+    A('path',{d:'M-6,-14 L132,-14 L218,16 L218,36 L132,14 L-6,14 Z',fill:'rgba(0,0,0,0.001)'});
+    A('title',{},p.lab+' probe \u2014 drag anywhere on it to move; drop on a glowing terminal');
     s.appendChild(g);});
   layoutProbes();
 }
@@ -2413,32 +2458,47 @@ function layoutProbes(){
     g.style.display=show?'':'none';
     const st=PP[p.k];
     if(st.tp&&PIN[st.tp]){st.x=PIN[st.tp].x;st.y=PIN[st.tp].y;}
-    g.setAttribute('transform','translate('+st.x+','+st.y+') rotate(-18)');});
+    g.setAttribute('transform','translate('+st.x+','+st.y+') rotate(-14)');});
   for(const id in PIN){const r=$('ring_'+id);if(!r)continue;
     let c=null;
     PROBES.forEach(p=>{if(p.tool===curTool()&&PP[p.k].tp===id)c=p.col;});
     r.setAttribute('opacity',c?1:0);r.setAttribute('stroke',c||'#066FEF');}
 }
 (function probeDrag(){
+  /* v23: grab a probe anywhere on its body; every probe-able terminal glows while dragging,
+     the terminal it will snap to glows brighter; dropping away from a terminal returns it to the rest. */
   const s=$('bench');
-  let cur=null;
+  let cur=null,off={x:0,y:0},snap=null;
   const toSvg=ev=>{const r=s.getBoundingClientRect();
     return {x:(ev.clientX-r.left)*1100/r.width,y:(ev.clientY-r.top)*430/r.height};};
+  const nearest=p=>{let best=null,bd=1e9;
+    for(const id in PIN){const q=PIN[id],d=Math.hypot(q.x-p.x,q.y-p.y);if(d<bd){bd=d;best=id;}}
+    return bd<34?best:null;};
+  const setSnap=id=>{if(snap===id)return;
+    if(snap){const o=$('glow_'+snap);if(o)o.classList.remove('snap');}
+    snap=id;if(id){const o=$('glow_'+id);if(o)o.classList.add('snap');}};
   s.addEventListener('pointerdown',ev=>{
-    const p=toSvg(ev);
-    let best=null,bd=1e9;
-    PROBES.forEach(pr=>{if(pr.tool!==curTool())return;
-      const st=PP[pr.k],d=Math.hypot(st.x-p.x,st.y-p.y);if(d<bd){bd=d;best=pr.k;}});
-    if(best&&bd<26){cur=best;s.setPointerCapture(ev.pointerId);ev.preventDefault();}});
+    const t=ev.target&&ev.target.closest?ev.target.closest('[data-pk]'):null;
+    if(!t)return;const k=t.getAttribute('data-pk');
+    const pr=PROBES.find(x=>x.k===k);if(!pr||pr.tool!==curTool())return;
+    const p=toSvg(ev);cur=k;off={x:p.x-PP[k].x,y:p.y-PP[k].y};
+    s.appendChild(t);                         /* bring the probe being moved to the front */
+    t.style.cursor='grabbing';s.classList.add('dragging');
+    s.setPointerCapture(ev.pointerId);ev.preventDefault();});
   s.addEventListener('pointermove',ev=>{
     if(!cur)return;const p=toSvg(ev);
-    PP[cur].x=p.x;PP[cur].y=p.y;PP[cur].tp=null;layoutProbes();});
-  s.addEventListener('pointerup',ev=>{
-    if(!cur)return;const p=toSvg(ev);
-    let best=null,bd=1e9;
-    for(const id in PIN){const q=PIN[id],d=Math.hypot(q.x-p.x,q.y-p.y);if(d<bd){bd=d;best=id;}}
-    if(best&&bd<30)PP[cur].tp=best;else PP[cur].tp=null;
-    probeAssign();layoutProbes();cur=null;});
+    const tip={x:Math.max(10,Math.min(1090,p.x-off.x)),y:Math.max(10,Math.min(424,p.y-off.y))};
+    PP[cur].x=tip.x;PP[cur].y=tip.y;PP[cur].tp=null;setSnap(nearest(tip));layoutProbes();});
+  const end=ev=>{
+    if(!cur)return;
+    const id=snap;
+    if(id)PP[cur].tp=id;else{PP[cur].tp=null;PP[cur].x=PP[cur].rx;PP[cur].y=PP[cur].ry;}
+    const g=$('pr_'+cur);if(g)g.style.cursor='grab';
+    setSnap(null);s.classList.remove('dragging');
+    probeAssign();layoutProbes();
+    if(id){const pr=PROBES.find(x=>x.k===cur);toast('\uD83D\uDD0C '+pr.lab+' probe on <b>'+id+'</b>','');}
+    cur=null;};
+  s.addEventListener('pointerup',end);s.addEventListener('pointercancel',end);
 })();
 function pinLab(id){return id&&PIN[id]?id+' ('+PIN[id].def.lab+')':(id||'not connected');}
 
@@ -3304,7 +3364,7 @@ document.querySelectorAll('aside .card.fold h2').forEach(h=>h.onclick=()=>h.pare
   const s=$('bench');let grabbed=false;const cyc={};
   const toSvg=ev=>{const r=s.getBoundingClientRect();return {x:(ev.clientX-r.left)*1100/r.width,y:(ev.clientY-r.top)*430/r.height};};
   s.addEventListener('pointerdown',ev=>{const p=toSvg(ev);
-    grabbed=PROBES.some(pr=>pr.tool===TOOL&&Math.hypot(PP[pr.k].x-p.x,PP[pr.k].y-p.y)<26);});
+    grabbed=!!(ev.target&&ev.target.closest&&ev.target.closest('[data-pk]'));});
   s.addEventListener('click',ev=>{
     if(grabbed){grabbed=false;return;}
     const p=toSvg(ev);let best=null,bd=1e9;
